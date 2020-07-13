@@ -20,7 +20,8 @@ uname -a > SysInfo.txt
 ps -e -u root --forest > RunningProc.txt #process info
 
 ############################ Network Checks
-
+echo "Checking network connectivity."
+sleep 3s
 touch NetChecks.txt
 urlsToCheck=(
 "portal.cloudappsecurity.com"
@@ -62,6 +63,8 @@ docker ps -a -f "ancestor=mcr.microsoft.com/mcas/logcollector" -f status=running
 docker network ls --filter "driver=bridge" > HostNetworkInfo.txt
 docker network inspect bridge > HostNetworkInfo.txt
 
+sleep 3s
+
 # Grab Collector Status from containers
 for i in "${containerIDs[@]}" 
 do
@@ -80,7 +83,7 @@ do
 
     echo "Reverting back to normal syslog operations"
     sudo docker exec  $i bash -c "service 'stop rsyslog-debug'; service 'start rsyslog'"
-    docker cp $i:/var/log/syslog ./${i}_Syslog.txt
+    docker cp $i:/var/log/syslog.debug ./${i}_Syslog.txt
 done
 
-tar -czvf $folderPath
+tar -czvf LogGrabberDiag.tar.gz $folderPath
