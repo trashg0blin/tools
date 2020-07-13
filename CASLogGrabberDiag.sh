@@ -14,7 +14,8 @@ folderPath=/tmp/LogCollecterDiag_$(date -u +%Y%m%d_%H%M%S)
 mkdir $folderPath && cd $folderPath
 
 ############################ System Info
-
+echo "Collecting system info"
+sleep 3s
 uname -a > SysInfo.txt 
 ps -e -u root --forest > RunningProc.txt #process info
 
@@ -82,3 +83,4 @@ do
     docker cp $i:/var/log/syslog ./${i}_Syslog.txt
 done
 
+tar -czvf $folderPath
