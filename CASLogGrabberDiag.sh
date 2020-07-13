@@ -10,18 +10,17 @@ fi
 
 # Make report directory
 # Time in UTC, date format yyyymmdd
-folderPath=/tmp/LogCollecterDiag_$(date -u +%Y%m%d_%H%M%S)
-mkdir $folderPath && cd $folderPath
+folderPath=/tmp/
+fileName=LogCollecterDiag_$(date -u +%Y%m%d_%H%M)
+mkdir $folderPath$fileName && cd $folderPath$fileName
 
 ############################ System Info
-echo "Collecting system info"
-sleep 3s
+
 uname -a > SysInfo.txt 
 ps -e -u root --forest > RunningProc.txt #process info
 
 ############################ Network Checks
-echo "Checking network connectivity."
-sleep 3s
+
 touch NetChecks.txt
 urlsToCheck=(
 "portal.cloudappsecurity.com"
@@ -63,8 +62,6 @@ docker ps -a -f "ancestor=mcr.microsoft.com/mcas/logcollector" -f status=running
 docker network ls --filter "driver=bridge" > HostNetworkInfo.txt
 docker network inspect bridge > HostNetworkInfo.txt
 
-sleep 3s
-
 # Grab Collector Status from containers
 for i in "${containerIDs[@]}" 
 do
@@ -79,11 +76,14 @@ do
     sudo docker exec $i bash -c "service 'stop rsyslog'; service 'start rsyslog-debug'"
 
     echo "Pausing script to collect some syslog debug info"
-    sleep 5m
+    sleep 2s
 
     echo "Reverting back to normal syslog operations"
     sudo docker exec  $i bash -c "service 'stop rsyslog-debug'; service 'start rsyslog'"
-    docker cp $i:/var/log/syslog.debug ./${i}_Syslog.txt
+    docker cp $i:/var/log/syslog ./${i}_Syslog.txt
 done
 
-tar -czvf LogGrabberDiag.tar.gz $folderPath
+tar -czvf ${fileName}.tar.gz $folderPath$fileName
+
+echo "Archive created for engineer."
+echo "File path: ${$folderPath$fileName}.tar.gz"
