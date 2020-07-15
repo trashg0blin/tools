@@ -87,4 +87,4 @@ done
 tar -czvf ${fileName}.tar.gz $folderPath$fileName
 
 echo "Archive created for engineer."
-echo "File path: ${$folderPath$fileName}.tar.gz"
+echo "File path: $folderPath$fileName.tar.gz"
