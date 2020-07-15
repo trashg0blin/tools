@@ -65,6 +65,7 @@ docker network inspect bridge > HostNetworkInfo.txt
 # Grab Collector Status from containers
 for i in "${containerIDs[@]}" 
 do
+    cd $folderPath$fileName # return to base directory 
     containerPath=Container${i}
     mkdir $containerPath && cd $containerPath
     docker exec -it  $i collector_status -p > ${i}Diag.txt
@@ -80,7 +81,7 @@ do
 
     echo "Reverting back to normal syslog operations"
     sudo docker exec  $i bash -c "service 'stop rsyslog-debug'; service 'start rsyslog'"
-    docker cp $i:/var/log/syslog ./${i}_Syslog.txt
+    docker cp $i:/var/log/syslog.debug ./${i}_Syslog.txt
 done
 
 tar -czvf ${fileName}.tar.gz $folderPath$fileName
