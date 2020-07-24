@@ -60,7 +60,11 @@ urlsToCheck=(
 "flow.microsoft.com"
 "static2.sharepointonline.com"
 "dc.services.visualstudio.com"
-"blob.core.windows.net"
+"adaprodconsole.blob.core.windows.net"
+"prod03use2console1.blob.core.windows.net"
+"prod5usw2console1.blob.core.windows.net"
+"prod02euwconsole1.blob.core.windows.net"
+"prod4uksconsole1.blob.core.windows.net"
 )
 for i in "${urlsToCheck[@]}"; do 
   if nc -dvzw1 $i 443 2>/dev/null; 
