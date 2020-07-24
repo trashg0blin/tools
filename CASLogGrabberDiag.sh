@@ -8,6 +8,8 @@ if [ "$EUID" -ne 0 ]
   exit
 fi
 
+OS=`cat /etc/os-release | grep PRETTY_NAME | sed -n 's/.*\(SUSE\|Ubuntu\|Red Hat\|CentOS\).*/\1/p'`
+
 # Make report directory
 # Time in UTC, date format yyyymmdd
 folderPath=/tmp/
@@ -16,11 +18,48 @@ mkdir $folderPath$fileName && cd $folderPath$fileName
 
 ############################ System Info
 
+
 uname -a > SysInfo.txt 
 ps -e -u root --forest > RunningProc.txt #process info
 
+#Grab installed packages
+if [ "${OS,,}" == "ubuntu" ]; then
+    apt list --installed > InstalledPackages.txt
+elif [ "${OS,,}" == "red hat" ]; then
+    dnf list installed > InstalledPackages.txt
+elif [ "${OS,,}" == "centos" ]; then
+    dnf list installed > InstalledPackages.txt
+elif [ "${OS,,}" == "suse" ]; then
+    zypper se --installed-only > InstalledPackages.txt
+fi
+
+
 ############################ Network Checks
 
+# TODO: FIREWALL inspection
+if [ "${OS,,}" == "ubuntu" ]; then
+    ufw status verbose > FirewallConfig.txt
+elif [ "${OS,,}" == "red hat" ]; then
+    firewall-cmd --list-all > FirewallConfig.txt
+elif [ "${OS,,}" == "centos" ]; then
+    firewall-cmd --list-all > FirewallConfig.txt
+elif [ "${OS,,}" == "suse" ]; then
+    iptables -L INPUT > FirewallConfig.txt
+fi
+
+
+ocspUrls=(
+"ocsp.digicert.com"
+"ocsp.msocsp.com"
+)
+for i in "${ocspUrls[@]}"; do
+  if ! curl -v $i 2>&1 | grep ' HTTP/1.1 200 OK'; then
+    echo "Error connecting to ocsp provider ${i}"
+    else echo "Connection to $i succeeded"
+  fi
+done
+
+#resource url checks
 touch NetChecks.txt
 urlsToCheck=(
 "portal.cloudappsecurity.com"
@@ -44,9 +83,10 @@ for i in "${urlsToCheck[@]}"; do
   fi
 done
 
+
 ############################ Docker Specific Info 
 
-# Grab active containers
+
 echo "Grabbing some container information..."
 
 docker version >> DockerInfo.txt
@@ -84,7 +124,8 @@ do
     docker cp $i:/var/log/syslog.debug ./${i}_Syslog.txt
 done
 
-tar -czvf ${fileName}.tar.gz $folderPath$fileName
+
+tar -czvf /tmp/$fileName.tar.gz $folderPath$fileName
 
 echo "Archive created for engineer."
 echo "File path: $folderPath$fileName.tar.gz"
