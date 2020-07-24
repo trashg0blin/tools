@@ -47,18 +47,6 @@ elif [ "${OS,,}" == "suse" ]; then
     iptables -L INPUT > FirewallConfig.txt
 fi
 
-
-ocspUrls=(
-"ocsp.digicert.com"
-"ocsp.msocsp.com"
-)
-for i in "${ocspUrls[@]}"; do
-  if ! curl -v $i 2>&1 | grep ' HTTP/1.1 200 OK'; then
-    echo "Error connecting to ocsp provider ${i}"
-    else echo "Connection to $i succeeded"
-  fi
-done
-
 #resource url checks
 touch NetChecks.txt
 urlsToCheck=(
@@ -80,6 +68,17 @@ for i in "${urlsToCheck[@]}"; do
     else 
       echo "Check you firewall settings to ensure that a connection to $i is permitted."
       echo "Connection to $i failed" >> NetChecks.txt # not sure if all of these should work over https...need to double check 
+  fi
+done
+
+ocspUrls=(
+"ocsp.digicert.com"
+"ocsp.msocsp.com"
+)
+for i in "${ocspUrls[@]}"; do
+  if ! curl -v $i 2>&1 | grep ' HTTP/1.1 200 OK'; then
+    echo "Error connecting to ocsp provider ${i}" >> NetChecks.txt
+    else echo "Connection to $i succeeded" >> NetChecks.txt
   fi
 done
 
