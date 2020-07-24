@@ -1,4 +1,5 @@
 #! /bin/bash
+# Written by Christopher Smith squire of the shell and keeper of the scrolls
 # Quick diag script to collect and package system information for analysis
 # This script is not supported by Microsoft so use at your own risk
 
@@ -18,7 +19,6 @@ mkdir $folderPath$fileName && cd $folderPath$fileName
 
 ############################ System Info
 
-
 uname -a > SysInfo.txt 
 ps -e -u root --forest > RunningProc.txt #process info
 
@@ -33,10 +33,10 @@ elif [ "${OS,,}" == "suse" ]; then
     zypper se --installed-only > InstalledPackages.txt
 fi
 
-
+############################ End system info
 ############################ Network Checks
 
-# TODO: FIREWALL inspection
+# FIREWALL inspection
 if [ "${OS,,}" == "ubuntu" ]; then
     ufw status verbose > FirewallConfig.txt
 elif [ "${OS,,}" == "red hat" ]; then
@@ -71,6 +71,7 @@ for i in "${urlsToCheck[@]}"; do
   fi
 done
 
+#Cert validation check
 ocspUrls=(
 "ocsp.digicert.com"
 "ocsp.msocsp.com"
@@ -82,9 +83,8 @@ for i in "${ocspUrls[@]}"; do
   fi
 done
 
-
+############################ End Network Checks
 ############################ Docker Specific Info 
-
 
 echo "Grabbing some container information..."
 
@@ -116,13 +116,14 @@ do
     sudo docker exec $i bash -c "service 'stop rsyslog'; service 'start rsyslog-debug'"
 
     echo "Pausing script to collect some syslog debug info"
-    sleep 2s
+    sleep 5m
 
     echo "Reverting back to normal syslog operations"
     sudo docker exec  $i bash -c "service 'stop rsyslog-debug'; service 'start rsyslog'"
     docker cp $i:/var/log/syslog.debug ./${i}_Syslog.txt
 done
 
+############################ End Docker
 
 tar -czvf /tmp/$fileName.tar.gz $folderPath$fileName
 
