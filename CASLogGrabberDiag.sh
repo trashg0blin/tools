@@ -36,6 +36,9 @@ fi
 ############################ End system info
 ############################ Network Checks
 
+#Pull the DNS config
+cp /etc/resolv.conf ./DNSConfig.txt
+
 # FIREWALL inspection
 if [ "${OS,,}" == "ubuntu" ]; then
     ufw status verbose > FirewallConfig.txt
@@ -53,8 +56,6 @@ urlsToCheck=(
 "portal.cloudappsecurity.com"
 "cdn.cloudappsecurity.com"
 "adaproddiscovery.azureedge.net"
-"s-microsoft.com"
-"msecnd.net"
 "dev.virtualearth.net"
 "cloudappsecurity.com"
 "flow.microsoft.com"
@@ -120,7 +121,7 @@ do
     sudo docker exec $i bash -c "service 'stop rsyslog'; service 'start rsyslog-debug'"
 
     echo "Pausing script to collect some syslog debug info"
-    sleep 5m
+    sleep 1m
 
     echo "Reverting back to normal syslog operations"
     sudo docker exec  $i bash -c "service 'stop rsyslog-debug'; service 'start rsyslog'"
