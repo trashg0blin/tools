@@ -72,7 +72,7 @@ for i in "${urlsToCheck[@]}"; do
     then echo "Connection to $i succeeded" >> NetChecks.txt
     else 
       echo "Check you firewall settings to ensure that a connection to $i is permitted."
-      echo "Connection to $i failed" >> NetChecks.txt # not sure if all of these should work over https...need to double check 
+      echo "Connection to $i failed" >> NetChecks.txt 
   fi
 done
 
@@ -90,6 +90,8 @@ done
 
 ############################ End Network Checks
 ############################ Docker Specific Info 
+
+#TODO: Impelement logic to handle docker on snapd
 
 echo "Grabbing some container information..."
 
@@ -112,7 +114,7 @@ do
     cd $folderPath$fileName # return to base directory 
     containerPath=Container${i}
     mkdir $containerPath && cd $containerPath
-    docker exec -it  $i collector_status -p > ${i}Diag.txt
+    sudo docker exec -it  $i collector_status -p > ${i}Diag.txt
 
     docker cp $i:/var/log/adallom/ ./Logs
     docker cp $i:/etc/adallom/config/ ./ColumbusConfig/
@@ -130,7 +132,9 @@ done
 
 ############################ End Docker
 
-tar -czvf /tmp/$fileName.tar.gz $folderPath$fileName
+tar -czf /tmp/$fileName.tar.gz $folderPath$fileName
 
 echo "Archive created for engineer."
 echo "File path: $folderPath$fileName.tar.gz"
+
+##TODO: Generate the SCP command for the customer
