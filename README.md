@@ -1,4 +1,4 @@
-#Background
+# Background
 This script seeks to save on time and make both the customer's and our workflow more efficient by automating the collection of logs and information relevant to troubleshooting Log Collector Containers running on **LINUX** servers. Very little background in the Linux Command Line is necessary to be able to effectively execute this script the important things to know are:
 
 wget - A web download utility that fetches file from a specified URL
@@ -50,7 +50,7 @@ File Name - LogGrabberDiag_DateTime
 - InstalledPackages.txt - List of installed applications on a linux server.
 
 
-#Step-By-Step
+# Step-By-Step
 
 1. Have the customer copy the following command and enter into the terminal or ssh session of their linux server hosting docker:
 
@@ -73,7 +73,3 @@ File Name - LogGrabberDiag_DateTime
 7. Extract the files
 
         tar -zxf  LogGrabberDiag_<DateTime>
-
-#Reference
-
-https://dev.azure.com/SupportabilityWork/Azure%20Security/_wiki/wikis/Cloud%20App%20Security%20wiki/1980/HOW-TO-Log-Collector-Diagnostic-Script
