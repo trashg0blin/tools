@@ -39,6 +39,9 @@ fi
 #Pull the DNS config
 cp /etc/resolv.conf ./DNSConfig.txt
 
+#Grab listening ports
+netstat -anp > Netstat.txt
+
 # FIREWALL inspection
 if [ "${OS,,}" == "ubuntu" ]; then
     ufw status verbose > FirewallConfig.txt
