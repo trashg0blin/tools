@@ -35,8 +35,8 @@ using namespace System.Collections.Generic
 [CmdletBinding()]
 param ()
 
-$global:date = Get-Date -Format "yyyyMMddhhmm" -AsUTC
-$global:folderPath = "C:\Temp\"
+$global:Date = Get-Date -Format "yyyyMMddhhmm" -AsUTC
+$global:FolderPath = "C:\Temp\SensorDiagnostics$date"
 
 $TestResults = New-Object PSObject -Property @{
     Date                    = $date
@@ -58,6 +58,7 @@ $TestResults = New-Object PSObject -Property @{
 function New-Archive {
 
 }
+
 function Get-SensorLogs{
     [CmdletBinding()]
     [OutputType([psobject])]
@@ -68,82 +69,32 @@ function Get-SensorLogs{
         [string]
         $InstallPath
     )
-   
+    try{
+        $LogFolder = (Get-ChildItem -Path $InstallPath -Recurse | Where-Object {$_.Name -like "Logs"}).FullName
+        Copy-Item $LogFolder -Recurse -Destination $FolderPath 
+    }
+    Catch{
+        Write-Host "Error Fetching Sensor Logs."
+    }
 }
 
 function Get-ServerEventLogs{
-    #source https://gallery.technet.microsoft.com/scriptcenter/Retrieve-all-Events-from-5db61ec8
-    Param(            
-        [Parameter(Mandatory = $true)] 
-        [Alias('BeginDate','BeginTime','StartDate')]  
-        [ValidateScript({
-                    (Get-Date $_)
-        })]          
-        [datetime]$StartTime,
-        [Parameter(Mandatory = $true)] 
-        [Alias('EndDate')]  
-        [ValidateScript({
-                    (Get-Date $_)
-        })]          
-        [datetime]$EndTime
-    )  
-    Write-Host "Gathering Event log data"
-    $EventLogs = Get-WinEvent -ListLog * -ErrorVariable err -ea 0
-    $err | ForEach-Object -Process {
-        $warnmessage = $_.exception.message -replace '.*about the ', '' 
-        Write-Warning -Message $warnmessage
+    $EventProviders = @("System","Security","Application")
+    Foreach($Log in $EventProviders){
+        try{
+            $FileName = $FolderPath + $Hostname + "-" + $Log + "-" + $Date + ".evtx"
+            Write-Host "Extracting the $log file now."
+            wevtutil epl $Log $FileName
+        }
+        catch{
+            Write-Host "Error fetching $log logs"
+        }
     }
-
-    $Count = $EventLogs.count
-
-    $Events = $EventLogs |
-
-    ForEach-Object -Process {
-        $LogName = $_.logname
-        $Index = [array]::IndexOf($EventLogs,$_)
-        $Percentage = $Index / $Count
-        $Message = "Retrieving events from Logs ($Index of $Count)"
-     
-        Write-Progress -Activity $Message -PercentComplete ($Percentage * 100) -CurrentOperation $LogName -Status 'Processing ...'
-     
-        Get-WinEvent -FilterHashtable @{
-            LogName   = $LogName
-            StartTime = $StartTime
-            EndTime   = $EndTime
-        } -ea 0
-    } 
-
-    if ($Events)
-    {
-        {
-        $EventsSorted = $Events  |
-            Sort-Object -Property timecreated |
-            Select-Object -Property timecreated, id, logname, leveldisplayname, message 
-        
-            test-path $ExportToCSVPath
-
-                if (!$exists) {
-                write-error "$ExportToCSVPath doesn't exist, re-run script ..."
-                } else {
-                $date = get-date
-                $filename = "Events_$date`_$Computer.csv" -replace ':','_'
-                $filename = $filename -replace '/','-'
-                $EventsSorted | Export-csv ($ExportToCSVPath + '\' + $Filename)  -NoTypeInformation -Verbose
-                } 
-            } else 
-
-       } # end if exporttocsv 
-
-        
-    }
-    else 
-    {
-        Write-Warning -Message "`n`n`nNo events found between $StartTime and $EndTime"
-    }
-
 }
 
+
 function Get-GroupPolicySettings{
+    #TODO: Make this less janky
     [CmdletBinding()]
     [OutputType([psobject])]
     param (
@@ -153,35 +104,152 @@ function Get-GroupPolicySettings{
         [string]
         $ComputerName
     )
-    Get-GPResultantSetOfPolicy -ReportType xml -Computer "$ComputerName" -Path "$folderpath\GPResult-$ComputerName.xml"
+    [bool]$GPExportSuccesful = $false
+    if (Get-GPResultantSetOfPolicy -ReportType xml -Computer "$ComputerName" -Path "$folderpath\GPResult-$ComputerName.xml")
+    {
+        $GPExportSuccesful = $true
+    }
+    return $GPExportSuccesful
 }
 
-function Export-Registry($domainController){
-
+function Export-Registry{
+    #TODO: Make this less janky
+    [CmdletBinding()]
+    [OutputType([psobject])]
+    param (
+        [Parameter(Mandatory = $true,
+                   ValueFromPipelineByPropertyName = $true,
+                   Position = 0)]
+        [string]
+        $ComputerName
+    )
+    
+    [bool]$RegExportSuccesful = $false
+    if (Get-ChildItem HKCU:\ -recurse | Export-Clixml "$folderpath\$ComputerName.reg")
+    {
+        $RegExportSuccesful = $true
+    }
+    return $RegExportSuccesful
 }
 
-function Get-RemoteServerData($domainController){
+#TODO: Implement Remote tests.
+# function Get-RemoteServerData{
+#     [CmdletBinding()]
+#     [OutputType([psobject])]
+#     param (
+#         [Parameter(Mandatory = $true,
+#                    ValueFromPipelineByPropertyName = $true,
+#                    Position = 0)]
+#         [string]
+#         $ComputerName
+#     )
+# }
 
-}
-
-function Test-RemoteServerConnection{
-
-}
+# function Test-RemoteServerConnection{
+#     [CmdletBinding()]
+#     [OutputType([psobject])]
+#     param (
+#         [Parameter(Mandatory = $true,
+#                    ValueFromPipelineByPropertyName = $true,
+#                    Position = 0)]
+#         [string]
+#         $ComputerName
+#     )
+#     Test-WSMan -ComputerName $ComputerName
+# }
 
 function Test-SensorServiceConnectivity{
+    [CmdletBinding()]
+    [OutputType([psobject])]
+    param (
+        [Parameter(Mandatory = $true,
+                   ValueFromPipelineByPropertyName = $true,
+                   Position = 0)]
+        [string]
+        $PortalURL
+    )
 
+    $NetTestResults = Test-NetConnection -Port 443 -ComputerName $PortalURL
+    if ($NetTestResults.TcpTestSucceeded){
+        return $true
+    }
+    else {
+        return $false
+    }
 } 
 
-function Test-LdapBind{
+# function Test-LdapBind{
+#     ATALdapBindTester.exe 'contoso\_AtaSvc' 'Password' 'DC1.contoso.com' kerberos
+# }
 
+function Get-MDIAccount{
+    <# 
+    .SYNOPSIS 
+        Gets information about the service account. 
+    .DESCRIPTION
+        This function will read the attributes of the Active Directory Service Account. 
+    .EXAMPLE 
+        Get-MDIServiceAccount -AccountName "Contoso\MDIAccount" -IsServiceAccount $True
+    .Notes 
+        Author : Christopher Smith
+        WebSite: https://github.com/ms-smithch 
+    #> 
+    [CmdletBinding()]
+    [OutputType([psobject])]
+    param (
+        [Parameter(Mandatory = $true,
+                   ValueFromPipelineByPropertyName = $true,
+                   Position = 0)]
+        [string]
+        $AccountName
+    )
+    Get-ADServiceAccount $AccountName -Properties *
 }
 
 function Get-NetworkTrace{
-    New-NetEventSession -Name "MDISensorDebug" -LocalFilePath $folderPath
-
+    <# 
+    .SYNOPSIS 
+        Gathers a network Trace from the Domain Controller
+    .DESCRIPTION
+        This function will start a Network Capture on the specified Domain Controller. 
+    .EXAMPLE 
+        Get-NetworkTrace
+    .Notes 
+        Author : Christopher Smith
+        WebSite: https://github.com/ms-smithch 
+    #> 
+    [CmdletBinding()]
+    [OutputType([psobject])]
+    param (
+        [Parameter(Mandatory = $true,
+                   ValueFromPipelineByPropertyName = $true,
+                   Position = 0)]
+        [bool]$NetworkTrace
+    )
+    if($NetworkTrace){
+    New-NetEventSession -Name "MDISensorDebug" -LocalFilePath $FolderPath -CaptureMode SaveToFile
+    Add-NetEventProvider -Name "Microsoft-Windows-TCPIP" -SessionName "MDISensorDebug"
+    Start-NetEventSession -Name "MDISensorDebug"
+    Start-Sleep -Seconds 300
+    Stop-NetEventSession -Name "MDISensorDebug"
+    }
+    else{
+        Write-Host "Network Capture not specified, skipping."
+    }
 }
 
 function Test-NNRConnectivity{
+    <# 
+    .SYNOPSIS 
+        Tests connection to other hosts to validate outbound NNR functionality
+    .DESCRIPTION
+        This function will attempt to establish a TCP handshake with another device on the network to validate NNR functionality. 
+    .EXAMPLE 
+        Test-NNRConnectivity -IPAddress 192.168.0.2
+    .Notes 
+        Author : Christopher Smith
+        WebSite: https://github.com/ms-smithch 
+    #> 
     [CmdletBinding()]
     [OutputType([psobject])]
     param (
@@ -191,6 +259,7 @@ function Test-NNRConnectivity{
         [string]
         $IPAddress
     )
+
     $NNRTestResults = New-Object System.Collections.Generic.Dictionary"[int,bool]"
     $Ports = 135,137,3389
     [bool]$Result = $false
@@ -202,42 +271,46 @@ function Test-NNRConnectivity{
     New-Object -Property $NNRTestResults -TypeName psobject 
 }
 
-function Get-EventLogDACL{
+function Get-EventLogSDDL{
     <# 
     .SYNOPSIS 
-        Get DACLs for Application, Security, and System Event logs. 
+        Get SDDLs for Application, Security, and System Event logs. 
     .DESCRIPTION
-        This function gets the DACLs for the Application, Security, and System Event logs and outputs them to a dictionary.
+        This function gets the SDDLs for the Application, Security, and System Event logs and outputs them to a dictionary.
     .EXAMPLE 
-        Compare-DACL -SDDL "O:BAG:SYD:(A;;0xf0005;;;SY)(A;;0x5;;;BA)(A;;0x1;;;S-1-5-32-573)"
+        Compare-SDDL -SDDL "O:BAG:SYD:(A;;0xf0005;;;SY)(A;;0x5;;;BA)(A;;0x1;;;S-1-5-32-573)"
     .Notes 
         Author : Christopher Smith
         WebSite: https://github.com/ms-smithch 
     #> 
-    $DACLs = New-Object System.Collections.Generic.Dictionary"[string,string]"
+    $SDDLs = New-Object System.Collections.Generic.Dictionary"[string,string]"
 
-    $NNRTestResults.Add("Application",(Get-WinEvent -ListLog Application | Select-Object -ExpandProperty SecurityDescriptor))
-    $NNRTestResults.Add("Security",(Get-WinEvent -ListLog Security | Select-Object -ExpandProperty SecurityDescriptor))
-    $NNRTestResults.Add("System",(Get-WinEvent -ListLog System | Select-Object -ExpandProperty SecurityDescriptor))
+    [string]$ApplicationLogSDDL = Get-WinEvent -ListLog Application | Select-Object -ExpandProperty SecurityDescriptor
+    $SDDLs.Add("Application",$ApplicationLogSDDL)
+
+    [string]$SecurityLogSDDL = Get-WinEvent -ListLog Security | Select-Object -ExpandProperty SecurityDescriptor
+    $SDDLs.Add("Security",$SecurityLogSDDL)
+
+    [string]$SystemLogSDDL = Get-WinEvent -ListLog System | Select-Object -ExpandProperty SecurityDescriptor
+    $SDDLs.Add("System",$SystemLogSDDL)
     
-    New-Object -Property $DACLs -TypeName psobject 
-
+    New-Object -Property $SDDLs -TypeName psobject 
 }
 
-function Compare-DACL{
+function Compare-SDDL{
     <# 
         .SYNOPSIS 
             Compare the Presented SDDL with an expected entry
         .DESCRIPTION
             This function takes an input SDDL and references it against SDDL entries that will enable full functionality of an MDI sensor
         .EXAMPLE 
-            Compare-DACL -SDDL "O:BAG:SYD:(A;;0xf0005;;;SY)(A;;0x5;;;BA)(A;;0x1;;;S-1-5-32-573)"
+            Compare-SDDL -SDDL "O:BAG:SYD:(A;;0xf0005;;;SY)(A;;0x5;;;BA)(A;;0x1;;;S-1-5-32-573)"
         .Notes 
             Author : Christopher Smith
             WebSite: https://github.com/ms-smithch 
     #> 
     [CmdletBinding()]
-    [OutputType([psobject])]
+    [OutputType([bool])]
     param (
         [Parameter(Mandatory = $true,
                    ValueFromPipelineByPropertyName = $true,
@@ -246,25 +319,32 @@ function Compare-DACL{
         $SDDL
     )
     [bool]$MDIAccessPermitted = $false
-    if ($SDDL -contains "(A;;0x1;;;S-1-5-80-818380073-2995186456-1411405591-3990468014-3617507088)" || `
+    if (ConvertFrom-SddlString $SDDL){
+        if ($SDDL -contains "(A;;0x1;;;S-1-5-80-818380073-2995186456-1411405591-3990468014-3617507088)" -or `
         $SDDL -contains "(A;;0x1;;;S-1-5-19)") {
             $MDIAccessPermitted = $true
         }
+    }else{  
+        Write-Host "Invalid SDDL Format"    
+        return
+    }
     return $MDIAccessPermitted
 }
 
 function Get-CertStore{
-        <# 
-            .SYNOPSIS 
-                Check the trusted root store for valid certs
-            .DESCRIPTION
-                This function check the trusted root certificate store to see if the DigiCert Baltimore Root and DigiCert Global Root G2 certificates are present
-            .EXAMPLE 
-                Get-InternetProxy
-            .Notes 
-                Author : Christopher Smith
-                WebSite: https://github.com/ms-smithch 
-    #> 
+    <# 
+        .SYNOPSIS 
+            Check the trusted root store for valid certs
+        .DESCRIPTION
+            This function check the trusted root certificate store to see if the DigiCert Baltimore Root and DigiCert Global Root G2 certificates are present
+        .EXAMPLE 
+            Get-InternetProxy
+        .Notes 
+            Author : Christopher Smith
+            WebSite: https://github.com/ms-smithch 
+    #>
+    [CmdletBinding()]
+    [OutputType([bool])]
 
     [bool]$RootCertsPresent = $false
     [bool]$DigicertG2CertPresent = $false
@@ -273,10 +353,10 @@ function Get-CertStore{
     if (Get-ChildItem -Path "Cert:\LocalMachine\Root" | Where-Object { $_.Thumbprint -eq "df3c24f9bfd666761b268073fe06d1cc8d4f82a4"}) {
         $DigicertG2CertPresent = $true
     }
-    if (Get-ChildItem -Path "Cert:\LocalMachine\Root" | Where-Object { $_.Thumbprint -eq "D4DE20D05E66FC53FE1A50882C78DB2852CAE474"}) {
+    if (Get-ChildItem -Path "Cert:\LocalMachine\Root" | Where-Object { $_.Thumbprint -eq "d4de20d05e66fc53fe1a50882c78db2852cae474" }) {
         $BaltimoreCertPresent = $true
     }
-    if ($BaltimoreCertPresent && $DigicertG2CertPresent) {
+    if ($BaltimoreCertPresent -and $DigicertG2CertPresent) {
         $RootCertsPresent = $true
     }
     return $RootCertsPresent       
@@ -284,37 +364,35 @@ function Get-CertStore{
 
 function Get-ProxyConfig{
     <# 
-            .SYNOPSIS 
-                Determine the internet proxy address
-            .DESCRIPTION
-                This function allows you to determine the the internet proxy address used by your computer
-            .EXAMPLE 
-                Get-ProxyConfig
-            .Notes 
-                Author : Antoine DELRUE 
-                WebSite: http://obilan.be 
-    #> 
+        .SYNOPSIS 
+            Determine the internet proxy address
+        .DESCRIPTION
+            This function allows you to determine the the internet proxy address used by your computer
+        .EXAMPLE 
+            Get-ProxyConfig
+        .Notes 
+            Author : Antoine DELRUE 
+            WebSite: http://obilan.be 
+    #>
+    [CmdletBinding()]
+    [OutputType([string])]
 
     $proxies = (Get-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings').proxyServer
 
-    if ($proxies)
-    {
-        if ($proxies -ilike "*=*")
-        {
+    if ($proxies){
+        if ($proxies -ilike "*=*"){
             $proxies -replace "=","://" -split(';') | Select-Object -First 1
         }
-
-        else
-        {
+        else{
             $ProxyAddress = "http://" + $proxies
         }
     }
    return $ProxyAddress  
 }
 
-function Main{
+function Get-MDISensorDiagnostics{
     $TestResults.ServerName = $env:COMPUTERNAME
-    $TestResults.SensorInstallLocation = Get-ItemProperty HKLM:\Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\* | Where-Object {$_.DisplayName -like "*Azure*"} | Select-Object InstallLocation
+    $TestResults.SensorInstallLocation = Get-ItemProperty "HKLM:\Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*" | Where-Object {$_.DisplayName -like "*Azure*"} | Select-Object InstallLocation
     $TestResults.NNRResults = Test-NNRConnectivity
     
 }
