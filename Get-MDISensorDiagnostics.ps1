@@ -33,33 +33,69 @@ Gathers all diagnostic data from all sensors within a given domain
 using namespace System.Collections.Generic
 
 [CmdletBinding()]
-param ()
+param (
+    [Parameter(Mandatory = $false,
+        ValueFromPipelineByPropertyName = $true,
+        HelpMessage = 'Enter the Install Path')]
+    [string]
+        $InstallPath = "C:\Program Files\Azure Advanced Threat Protection Sensor\",
+    [Parameter(Mandatory = $false,
+        HelpMessage = 'Set if a network capture is needed')]
+    [bool]
+        $NetworkTrace = $false
+)
 
-$global:Date = Get-Date -Format "yyyyMMddhhmm" -AsUTC
-$global:FolderPath = "C:\Temp\SensorDiagnostics$date"
+$global:Date = Get-Date -Format "yyyyMMddhhmm" # UTC would be a nice touch
+$global:FolderPath = "C:\Temp\SensorDiagnostics$date\"
 
-$TestResults = New-Object PSObject -Property @{
-    Date                    = $date
-    ServerName              = $Hostname
-    ServiceAccount          = $user.name
-    InstallDate             = $CreateDate
-    Version                 = $Version
-    CertsPresent            = $AreCertsPresent
-    SensorInstallLocation   = $InstallPath
-    IsRunning               = $ServiceStatus
-    RegistryExportSuccess   = $RegistryExported
-    EventLogSDDLs           = $SDDLs
-    NNRResults              = $NNRTestResults
-    SystemProxyPresent      = $IsProxied
-    SystemProxyAddress      = $ProxyAddress 
+function main{
+    $Outfile = $FolderPath + "TestResults.json" 
+    $TestResults = New-Object PSObject -Property @{
+        Date                    = $Date
+        ServerName              = ([System.Net.Dns]::GetHostByName(($env:computerName))).Hostname
+        ServiceAccount          = $user.name
+        InstallDate             = $CreateDate
+        Version                 = (Get-ChildItem -path $InstallPath `
+            |  Sort-Object -Property LastWriteTime -Descending)[0].Name
+        CertsPresent            = $AreCertsPresent
+        SensorInstallLocation   = $InstallPath
+        IsRunning               = $ServiceStatus
+        GroupPolicyExportSuccess= $GPExportSuccesful
+        RegistryExportSuccess   = $RegistryExported
+        LogExportSuccess        = $LogExportResult
+        EventLogExportSuccess   = $EventLogExportResult
+        EventLogSDDLs           = $SDDLs
+        CanAccessEventLogs      = $MDIAccessPermitted
+        NNRResults              = $NNRTestResults            
+        PortalURL               = $PortalURL
+        CanConnectToService     = $NetTestResults
+        SystemProxyPresent      = $false
+        SystemProxyAddress      = $ProxyAddress
+    }
+
+
+    $TestResults.LogExportSuccess = Get-SensorLogs -InstallPath $InstallPath 
+    $TestResults.EventLogExportSuccess = Get-ServerEventLogs
+    $TestResults.GroupPolicyExportSuccess = Get-GroupPolicySettings 
+    $TestResults.RegistryExportSuccess = Export-Registry
+    $TestResults.CanConnectToService = Test-SensorServiceConnectivity
+    Get-NetworkTrace $NetworkTrace
+    $TestResults.NNRResults = Test-NNRConnectivity
+    $TestResults.EventLogSDDLs = Get-EventLogSDDL
+    $TestResults.CanAccessEventLogs = Compare-SDDL $TestResults.EventLogSDDLs.Security 
+    $TestResults.CertsPresent = Get-CertStore 
+    $TestResults.SystemProxyAddress = Get-ProxyConfig 
+    if ($TestResults.SystemProxyAddress){$TestResults.SystemProxyPresent = $true} 
+    ConvertTo-Json $TestResults | Out-File $Outfile
+
 }
-           
-
 function New-Archive {
 
 }
-
 function Get-SensorLogs{
+    # When testing in my own environment, I see issues where the InstallLocation of the RegKey fails to populate.
+    # Using the folder name as a reference instead of RegKeys. 
+    # Tested good 2020/04/25
     [CmdletBinding()]
     [OutputType([psobject])]
     param (
@@ -69,155 +105,110 @@ function Get-SensorLogs{
         [string]
         $InstallPath
     )
+    [bool]$LogExportResult = $false
     try{
-        $LogFolder = (Get-ChildItem -Path $InstallPath -Recurse | Where-Object {$_.Name -like "Logs"}).FullName
-        Copy-Item $LogFolder -Recurse -Destination $FolderPath 
+        $LogFolder = (Get-ChildItem -Path $InstallPath -Recurse -ErrorAction Stop | Where-Object {$_.Name -like "Logs"}).FullName
+        Copy-Item $LogFolder -Recurse -Destination $FolderPath -Force -ErrorAction Stop
+        $LogExportResult = $True
+        Write-Host "Sensor logs succesfully copied."
     }
     Catch{
         Write-Host "Error Fetching Sensor Logs."
+        Write-Warning $Error[0]
+        $LogExportResult = $False
     }
+    return $LogExportResult
 }
 
 function Get-ServerEventLogs{
+    #Tested good 2020/04/25
     $EventProviders = @("System","Security","Application")
+    [bool]$EventLogExportResult = $false
     Foreach($Log in $EventProviders){
         try{
-            $FileName = $FolderPath + $Hostname + "-" + $Log + "-" + $Date + ".evtx"
-            Write-Host "Extracting the $log file now."
+            $FileName = $FolderPath + $Log + "-" + $Date + ".evtx"
+            Write-Host "Extracting the $log log file now."
             wevtutil epl $Log $FileName
+            $EventLogExportResult = $true
         }
         catch{
             Write-Host "Error fetching $log logs"
+            Write-Error $Error[0]
+            $EventLogExportResult = $false
         }
     }
+    return $EventLogExportResult
 }
 
-
 function Get-GroupPolicySettings{
-    #TODO: Make this less janky
-    [CmdletBinding()]
-    [OutputType([psobject])]
-    param (
-        [Parameter(Mandatory = $true,
-                   ValueFromPipelineByPropertyName = $true,
-                   Position = 0)]
-        [string]
-        $ComputerName
-    )
+    #Tested good 2020/04/25
     [bool]$GPExportSuccesful = $false
-    if (Get-GPResultantSetOfPolicy -ReportType xml -Computer "$ComputerName" -Path "$folderpath\GPResult-$ComputerName.xml")
-    {
+    $OutputFile = "$folderpath" + "GPResult.html"
+    try {
+        Get-GPResultantSetOfPolicy -ReportType html -Path $OutputFile
         $GPExportSuccesful = $true
+    }
+    catch {
+        Write-Host "Unable to fetch output of GPResult"
+        Write-Error $Error[0]
     }
     return $GPExportSuccesful
 }
 
 function Export-Registry{
-    #TODO: Make this less janky
-    [CmdletBinding()]
-    [OutputType([psobject])]
-    param (
-        [Parameter(Mandatory = $true,
-                   ValueFromPipelineByPropertyName = $true,
-                   Position = 0)]
-        [string]
-        $ComputerName
-    )
-    
-    [bool]$RegExportSuccesful = $false
-    if (Get-ChildItem HKCU:\ -recurse | Export-Clixml "$folderpath\$ComputerName.reg")
-    {
-        $RegExportSuccesful = $true
+    #Tested good 2020/04/25
+    [bool]$Success = $false
+    $FileName = $folderpath + "RegExport.reg"
+    try {
+        Get-ChildItem HKCU:\ -recurse | Export-Clixml $FileName -ErrorAction SilentlyContinue
+        $Success = $true
     }
-    return $RegExportSuccesful
+    catch {
+        Write-Host "Error fetching registry"
+        Write-Error $Error[0]
+        $Success = $true
+    }
+    return $Success
 }
-
-#TODO: Implement Remote tests.
-# function Get-RemoteServerData{
-#     [CmdletBinding()]
-#     [OutputType([psobject])]
-#     param (
-#         [Parameter(Mandatory = $true,
-#                    ValueFromPipelineByPropertyName = $true,
-#                    Position = 0)]
-#         [string]
-#         $ComputerName
-#     )
-# }
-
-# function Test-RemoteServerConnection{
-#     [CmdletBinding()]
-#     [OutputType([psobject])]
-#     param (
-#         [Parameter(Mandatory = $true,
-#                    ValueFromPipelineByPropertyName = $true,
-#                    Position = 0)]
-#         [string]
-#         $ComputerName
-#     )
-#     Test-WSMan -ComputerName $ComputerName
-# }
 
 function Test-SensorServiceConnectivity{
-    [CmdletBinding()]
-    [OutputType([psobject])]
-    param (
-        [Parameter(Mandatory = $true,
-                   ValueFromPipelineByPropertyName = $true,
-                   Position = 0)]
-        [string]
-        $PortalURL
-    )
-
-    $NetTestResults = Test-NetConnection -Port 443 -ComputerName $PortalURL
-    if ($NetTestResults.TcpTestSucceeded){
-        return $true
+    # This can be written better, probably
+    # But it works
+    # Tested good 2020/04/25
+    [bool]$NetTestResults = $false
+    $FileName = $InstallPath + $TestResults.Version + "\SensorConfiguration.json"
+    try {
+        $SensorConfigFile = Get-Content $FileName -ErrorAction Stop | ConvertFrom-Json
+        $PropToExpand = "WorkspaceApplicationSensorApiWebClientConfigurationServiceEndpoint"
+        $TestResults.PortalURL = $SensorConfigFile.$PropToExpand.Address
+        $NetTestResults = Test-NetConnection -Port 443 -ComputerName $TestResults.PortalURL
+        if ($NetTestResults.TcpTestSucceeded){
+            $NetTestResults = $true
+        }
+        else {
+            $NetTestResults = $false
+        }
     }
-    else {
-        return $false
+    catch {
+        Write-Host "Failed to enumerate portal URL, will not test connection."
+        Write-Error $Error[0]
+        break
     }
-} 
-
-# function Test-LdapBind{
-#     ATALdapBindTester.exe 'contoso\_AtaSvc' 'Password' 'DC1.contoso.com' kerberos
-# }
-
-function Get-MDIAccount{
-    <# 
-    .SYNOPSIS 
-        Gets information about the service account. 
-    .DESCRIPTION
-        This function will read the attributes of the Active Directory Service Account. 
-    .EXAMPLE 
-        Get-MDIServiceAccount -AccountName "Contoso\MDIAccount" -IsServiceAccount $True
-    .Notes 
-        Author : Christopher Smith
-        WebSite: https://github.com/ms-smithch 
-    #> 
-    [CmdletBinding()]
-    [OutputType([psobject])]
-    param (
-        [Parameter(Mandatory = $true,
-                   ValueFromPipelineByPropertyName = $true,
-                   Position = 0)]
-        [string]
-        $AccountName
-    )
-    Get-ADServiceAccount $AccountName -Properties *
+    return $NetTestResults
 }
-
 function Get-NetworkTrace{
-    <# 
-    .SYNOPSIS 
+    # Tested good 2020/04/25
+    <#
+    .SYNOPSIS
         Gathers a network Trace from the Domain Controller
     .DESCRIPTION
-        This function will start a Network Capture on the specified Domain Controller. 
-    .EXAMPLE 
+        This function will start a Network Capture on the specified Domain Controller.
+    .EXAMPLE
         Get-NetworkTrace
-    .Notes 
+    .Notes
         Author : Christopher Smith
-        WebSite: https://github.com/ms-smithch 
-    #> 
+        WebSite: https://github.com/ms-smithch
+    #>
     [CmdletBinding()]
     [OutputType([psobject])]
     param (
@@ -226,12 +217,20 @@ function Get-NetworkTrace{
                    Position = 0)]
         [bool]$NetworkTrace
     )
+    $OutputFile = $FolderPath + "NetCapture.etl"
+
     if($NetworkTrace){
-    New-NetEventSession -Name "MDISensorDebug" -LocalFilePath $FolderPath -CaptureMode SaveToFile
-    Add-NetEventProvider -Name "Microsoft-Windows-TCPIP" -SessionName "MDISensorDebug"
-    Start-NetEventSession -Name "MDISensorDebug"
-    Start-Sleep -Seconds 300
-    Stop-NetEventSession -Name "MDISensorDebug"
+        try{
+            New-NetEventSession -Name "MDISensorDebug" -LocalFilePath $OutputFile -CaptureMode SaveToFile -ErrorAction SilentlyContinue
+            Add-NetEventProvider -Name "Microsoft-Windows-TCPIP" -SessionName "MDISensorDebug" -ErrorAction SilentlyContinue
+            Start-NetEventSession -Name "MDISensorDebug" -ErrorAction SilentlyContinue
+            Start-Sleep -Seconds 300
+            Stop-NetEventSession -Name "MDISensorDebug" -ErrorAction SilentlyContinue
+        }
+        catch{
+            Write-Host "Network Capture failed."
+            Write-Error $Error[0]
+        }
     }
     else{
         Write-Host "Network Capture not specified, skipping."
@@ -239,17 +238,18 @@ function Get-NetworkTrace{
 }
 
 function Test-NNRConnectivity{
-    <# 
-    .SYNOPSIS 
+    # Tested good 2020/04/25
+    <#
+    .SYNOPSIS
         Tests connection to other hosts to validate outbound NNR functionality
     .DESCRIPTION
-        This function will attempt to establish a TCP handshake with another device on the network to validate NNR functionality. 
-    .EXAMPLE 
+        This function will attempt to establish a TCP handshake with another device on the network to validate NNR functionality.
+    .EXAMPLE
         Test-NNRConnectivity -IPAddress 192.168.0.2
-    .Notes 
+    .Notes
         Author : Christopher Smith
-        WebSite: https://github.com/ms-smithch 
-    #> 
+        WebSite: https://github.com/ms-smithch
+    #>
     [CmdletBinding()]
     [OutputType([psobject])]
     param (
@@ -268,47 +268,49 @@ function Test-NNRConnectivity{
         $NNRTestResults.Add($Ports[$i],$Result)
         $Result = $false #reset for next iteration
     }
-    New-Object -Property $NNRTestResults -TypeName psobject 
+    New-Object -Property $NNRTestResults -TypeName psobject
 }
 
 function Get-EventLogSDDL{
-    <# 
-    .SYNOPSIS 
-        Get SDDLs for Application, Security, and System Event logs. 
+    # Tested good 2020/04/25
+    <#
+    .SYNOPSIS
+        Get SDDLs for Application, Security, and System Event logs.
     .DESCRIPTION
         This function gets the SDDLs for the Application, Security, and System Event logs and outputs them to a dictionary.
-    .EXAMPLE 
+    .EXAMPLE
         Compare-SDDL -SDDL "O:BAG:SYD:(A;;0xf0005;;;SY)(A;;0x5;;;BA)(A;;0x1;;;S-1-5-32-573)"
-    .Notes 
+    .Notes
         Author : Christopher Smith
-        WebSite: https://github.com/ms-smithch 
-    #> 
+        WebSite: https://github.com/ms-smithch
+    #>
     $SDDLs = New-Object System.Collections.Generic.Dictionary"[string,string]"
 
-    [string]$ApplicationLogSDDL = Get-WinEvent -ListLog Application | Select-Object -ExpandProperty SecurityDescriptor
+    [string]$ApplicationLogSDDL = Get-WinEvent -ListLog Application -ErrorAction SilentlyContinue | Select-Object -ExpandProperty SecurityDescriptor
     $SDDLs.Add("Application",$ApplicationLogSDDL)
 
-    [string]$SecurityLogSDDL = Get-WinEvent -ListLog Security | Select-Object -ExpandProperty SecurityDescriptor
+    [string]$SecurityLogSDDL = Get-WinEvent -ListLog Security -ErrorAction SilentlyContinue | Select-Object -ExpandProperty SecurityDescriptor
     $SDDLs.Add("Security",$SecurityLogSDDL)
 
-    [string]$SystemLogSDDL = Get-WinEvent -ListLog System | Select-Object -ExpandProperty SecurityDescriptor
+    [string]$SystemLogSDDL = Get-WinEvent -ListLog System -ErrorAction SilentlyContinue | Select-Object -ExpandProperty SecurityDescriptor
     $SDDLs.Add("System",$SystemLogSDDL)
-    
-    New-Object -Property $SDDLs -TypeName psobject 
+
+    New-Object -Property $SDDLs -TypeName psobject
 }
 
 function Compare-SDDL{
-    <# 
-        .SYNOPSIS 
+    # Tested good 2020/04/25
+    <#
+        .SYNOPSIS
             Compare the Presented SDDL with an expected entry
         .DESCRIPTION
             This function takes an input SDDL and references it against SDDL entries that will enable full functionality of an MDI sensor
-        .EXAMPLE 
+        .EXAMPLE
             Compare-SDDL -SDDL "O:BAG:SYD:(A;;0xf0005;;;SY)(A;;0x5;;;BA)(A;;0x1;;;S-1-5-32-573)"
-        .Notes 
+        .Notes
             Author : Christopher Smith
-            WebSite: https://github.com/ms-smithch 
-    #> 
+            WebSite: https://github.com/ms-smithch
+    #>
     [CmdletBinding()]
     [OutputType([bool])]
     param (
@@ -318,30 +320,36 @@ function Compare-SDDL{
         [string]
         $SDDL
     )
+    $AtpSensorService = "*(A;;0x1;;;S-1-5-80-818380073-2995186456-1411405591-3990468014-3617507088)*"
+    $NTNetworkService = "*(A;;0x1;;;S-1-5-19)*"
     [bool]$MDIAccessPermitted = $false
-    if (ConvertFrom-SddlString $SDDL){
-        if ($SDDL -contains "(A;;0x1;;;S-1-5-80-818380073-2995186456-1411405591-3990468014-3617507088)" -or `
-        $SDDL -contains "(A;;0x1;;;S-1-5-19)") {
+    if (ConvertFrom-SddlString $sddl){
+        if ($SDDL -like $AtpSensorService -or $SDDL -like $NTNetworkService) {
             $MDIAccessPermitted = $true
         }
-    }else{  
-        Write-Host "Invalid SDDL Format"    
+        else{
+            return $MDIAccessPermitted
+        }
+    }
+    else{
+        Write-Host "Invalid SDDL Format"
         return
     }
     return $MDIAccessPermitted
 }
 
 function Get-CertStore{
-    <# 
-        .SYNOPSIS 
+    # Tested good 2020/04/25
+    <#
+        .SYNOPSIS
             Check the trusted root store for valid certs
         .DESCRIPTION
             This function check the trusted root certificate store to see if the DigiCert Baltimore Root and DigiCert Global Root G2 certificates are present
-        .EXAMPLE 
+        .EXAMPLE
             Get-InternetProxy
-        .Notes 
+        .Notes
             Author : Christopher Smith
-            WebSite: https://github.com/ms-smithch 
+            WebSite: https://github.com/ms-smithch
     #>
     [CmdletBinding()]
     [OutputType([bool])]
@@ -359,20 +367,21 @@ function Get-CertStore{
     if ($BaltimoreCertPresent -and $DigicertG2CertPresent) {
         $RootCertsPresent = $true
     }
-    return $RootCertsPresent       
+    return $RootCertsPresent
 }
 
 function Get-ProxyConfig{
-    <# 
-        .SYNOPSIS 
+    # Tested good 2020/04/25
+    <#
+        .SYNOPSIS
             Determine the internet proxy address
         .DESCRIPTION
             This function allows you to determine the the internet proxy address used by your computer
-        .EXAMPLE 
+        .EXAMPLE
             Get-ProxyConfig
-        .Notes 
-            Author : Antoine DELRUE 
-            WebSite: http://obilan.be 
+        .Notes
+            Author : Antoine DELRUE
+            WebSite: http://obilan.be
     #>
     [CmdletBinding()]
     [OutputType([string])]
@@ -387,13 +396,39 @@ function Get-ProxyConfig{
             $ProxyAddress = "http://" + $proxies
         }
     }
-   return $ProxyAddress  
+   return $ProxyAddress
 }
 
-function Get-MDISensorDiagnostics{
-    $TestResults.ServerName = $env:COMPUTERNAME
-    $TestResults.SensorInstallLocation = Get-ItemProperty "HKLM:\Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*" | Where-Object {$_.DisplayName -like "*Azure*"} | Select-Object InstallLocation
-    $TestResults.NNRResults = Test-NNRConnectivity
-    
-}
+main #script entry point
+
+#TODO: Implement LDAP Bind testing
+# function Test-LdapBind{
+#     ATALdapBindTester.exe 'contoso\_AtaSvc' 'Password' 'DC1.contoso.com' kerberos
+# }
+
+# Placeholder. I don't think this is entirely necessary. Would likely need more info for a service account 
+#function Get-MDIAccount{
+#     <#
+#     .SYNOPSIS
+#         Gets information about the service account.
+#     .DESCRIPTION
+#         This function will read the attributes of the Active Directory Service Account.
+#     .EXAMPLE
+#         Get-MDIServiceAccount -AccountName "Contoso\MDIAccount" -IsServiceAccount $True
+#     .Notes
+#         Author : Christopher Smith
+#         WebSite: https://github.com/ms-smithch
+#     #>
+#     [CmdletBinding()]
+#     [OutputType([psobject])]
+#     param (
+#         [Parameter(Mandatory = $true,
+#                    ValueFromPipelineByPropertyName = $true,
+#                    Position = 0)]
+#         [string]
+#         $AccountName
+#     )
+#     Get-ADServiceAccount $AccountName -Properties *
+# }
+
 # TLS Versions somewhere along the line
