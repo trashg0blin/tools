@@ -6,29 +6,17 @@
 .Synopsis
 Gathers Microsoft Defender for Identity Sensor diagnostic data for use in support cases.
 
-.Description
-The Telnet command tests the connectivity between two computers on a TCP Port. By running this command, you can determine if specific service is running on Server.
-
-.Parameter <AllSensors>
-This is a required parameter where you need to specify a computer name which can be localhost or a remote computer
-
-.Parameter <Domain>
-This is a required parameter where you need to specify a TCP port you want to test connection on.
-
-.Parameter <DataPath>
-This is an optional parameter where you can specify the folder of output file
-
 .Example
 Get-MIDSensorDiagnostics
 Gathers local sensor diagnostic data
 
 .Example
-Get-MIDSensorDiagnostics -AllSensors -Domain "contoso.com"
-Gathers all diagnostic data from all sensors within a forest
+Get-MIDSensorDiagnostics -InstallPath "D:\Azure Advanced Threat Protection Sensor\"
 
 .Example
-Get-MIDSensorDiagnostics -AllSensors -Domain "contoso.com"
-Gathers all diagnostic data from all sensors within a given domain
+Get-MIDSensorDiagnostics -NetworkTrace True
+Gathers a network trace from the sensor
+
 #>
 using namespace System.Collections.Generic
 
@@ -107,6 +95,7 @@ function Get-SensorLogs{
     )
     [bool]$LogExportResult = $false
     try{
+        Write-Host "Grabbing sensor logs."
         $LogFolder = (Get-ChildItem -Path $InstallPath -Recurse -ErrorAction Stop | Where-Object {$_.Name -like "Logs"}).FullName
         Copy-Item $LogFolder -Recurse -Destination $FolderPath -Force -ErrorAction Stop
         $LogExportResult = $True
@@ -145,6 +134,7 @@ function Get-GroupPolicySettings{
     [bool]$GPExportSuccesful = $false
     $OutputFile = "$folderpath" + "GPResult.html"
     try {
+        Write-Host "Grabbing Group Policy Settings."
         Get-GPResultantSetOfPolicy -ReportType html -Path $OutputFile
         $GPExportSuccesful = $true
     }
@@ -178,11 +168,12 @@ function Test-SensorServiceConnectivity{
     [bool]$NetTestResults = $false
     $FileName = $InstallPath + $TestResults.Version + "\SensorConfiguration.json"
     try {
+        Write-Host "Testing connectivity to the sensor service"
         $SensorConfigFile = Get-Content $FileName -ErrorAction Stop | ConvertFrom-Json
         $PropToExpand = "WorkspaceApplicationSensorApiWebClientConfigurationServiceEndpoint"
         $TestResults.PortalURL = $SensorConfigFile.$PropToExpand.Address
-        $NetTestResults = Test-NetConnection -Port 443 -ComputerName $TestResults.PortalURL
-        if ($NetTestResults.TcpTestSucceeded){
+        $NetTest = Test-NetConnection -Port 443 -ComputerName $TestResults.PortalURL
+        if ($NetTest.TcpTestSucceeded){
             $NetTestResults = $true
         }
         else {
@@ -192,7 +183,6 @@ function Test-SensorServiceConnectivity{
     catch {
         Write-Host "Failed to enumerate portal URL, will not test connection."
         Write-Error $Error[0]
-        break
     }
     return $NetTestResults
 }
@@ -221,6 +211,7 @@ function Get-NetworkTrace{
 
     if($NetworkTrace){
         try{
+            Write-Host "Attempting to capture network data."
             New-NetEventSession -Name "MDISensorDebug" -LocalFilePath $OutputFile -CaptureMode SaveToFile -ErrorAction SilentlyContinue
             Add-NetEventProvider -Name "Microsoft-Windows-TCPIP" -SessionName "MDISensorDebug" -ErrorAction SilentlyContinue
             Start-NetEventSession -Name "MDISensorDebug" -ErrorAction SilentlyContinue
@@ -263,6 +254,7 @@ function Test-NNRConnectivity{
     $NNRTestResults = New-Object System.Collections.Generic.Dictionary"[int,bool]"
     $Ports = 135,137,3389
     [bool]$Result = $false
+    Write-Host "Testing Network Name Resolution over ports 135,137,and 3389 on $IPaddress"
     for ($i=0; $i -lt $ports.Length; $i++) {
         $Result = (Test-NetConnection -ComputerName $IPAddress -port $Ports[$i]).TcpTestSucceeded
         $NNRTestResults.Add($Ports[$i],$Result)
@@ -285,6 +277,8 @@ function Get-EventLogSDDL{
         WebSite: https://github.com/ms-smithch
     #>
     $SDDLs = New-Object System.Collections.Generic.Dictionary"[string,string]"
+    
+    Write-Host "Grabbing SDDLs for event logs."
 
     [string]$ApplicationLogSDDL = Get-WinEvent -ListLog Application -ErrorAction SilentlyContinue | Select-Object -ExpandProperty SecurityDescriptor
     $SDDLs.Add("Application",$ApplicationLogSDDL)
@@ -320,9 +314,10 @@ function Compare-SDDL{
         [string]
         $SDDL
     )
-    $AtpSensorService = "*(A;;0x1;;;S-1-5-80-818380073-2995186456-1411405591-3990468014-3617507088)*"
-    $NTNetworkService = "*(A;;0x1;;;S-1-5-19)*"
+    $AtpSensorService = "*(A;;0x1;;;S-1-5-80-818380073-2995186456-1411405591-3990468014-3617507088)*" #probably shouldn't hard code this
+    $NTNetworkService = "*(A;;0x1;;;S-1-5-19)*" #probably shouldn't hard code this
     [bool]$MDIAccessPermitted = $false
+    Write-Host "Checking permissions to the event logs."
     if (ConvertFrom-SddlString $sddl){
         if ($SDDL -like $AtpSensorService -or $SDDL -like $NTNetworkService) {
             $MDIAccessPermitted = $true
@@ -358,6 +353,8 @@ function Get-CertStore{
     [bool]$DigicertG2CertPresent = $false
     [bool]$BaltimoreCertPresent = $false
 
+    Write-Host "Checking for root certs"
+
     if (Get-ChildItem -Path "Cert:\LocalMachine\Root" | Where-Object { $_.Thumbprint -eq "df3c24f9bfd666761b268073fe06d1cc8d4f82a4"}) {
         $DigicertG2CertPresent = $true
     }
@@ -387,6 +384,7 @@ function Get-ProxyConfig{
     [OutputType([string])]
 
     $proxies = (Get-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings').proxyServer
+    Write-Host "Grabbing current proxy config"
 
     if ($proxies){
         if ($proxies -ilike "*=*"){
