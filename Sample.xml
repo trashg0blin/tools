@@ -1,0 +1,5 @@
+<Exclusions>
+    <Exclusion type="FileName" value='sample.exe'></Exclusion>
+    <Exclusion type="Extension" value='.stl'></Exclusion>
+    <Exclusion type="FolderPath" value='D:\Program Files\SQL\*'></Exclusion>
+</Exclusions>
