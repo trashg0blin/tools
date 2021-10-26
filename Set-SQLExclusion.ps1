@@ -1,3 +1,5 @@
+#DISCLAIMER: NOT SUPPORTED BY MICROSOFT
+
 $DriveLetter = "C"
 
 $Data = "C:\Program Files\Microsoft Sql Server\"
