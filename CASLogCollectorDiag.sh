@@ -78,11 +78,18 @@ done
 
 #Cert validation check
 ocspUrls=(
+"crl3.digicert.com"
+"crl4.digicert.com"
 "ocsp.digicert.com"
+"www.d-trust.net"
+"root-c3-ca2-2009.ocsp.d-trust.net"
+"crl.microsoft.com"
+"oneocsp.microsoft.com"
 "ocsp.msocsp.com"
+"www.microsoft.com/pkiops"
 )
 for i in "${ocspUrls[@]}"; do
-  if ! curl -v $i 2>&1 | grep 'Content-Type: application/ocsp-response'; then
+  if curl -v $i 2>&1 | grep 'Connection refused'; then #Just checking for connectivity to the endpoint!
     echo "Error connecting to ocsp provider ${i}" >> NetChecks.txt
     else echo "Connection to $i succeeded" >> NetChecks.txt
   fi
